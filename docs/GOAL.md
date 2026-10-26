@@ -64,7 +64,7 @@ Targets marked *provisional* come from first estimates. The research phase confi
 | S7 | Image quality metrics are trustworthy | PSNR, SSIM and ΔE2000 match scikit-image and colour-science within documented tolerance | `ctest` |
 | S8 | Sensor noise is characterized | Shot and read noise fitted per Bayer channel from raw data. Agreement with the capture's stored noise profile reported where one exists. | Characterization report |
 | S9 | Results qualify across conditions | S1 to S7 hold across the qualification matrix: ISO levels, scenes, frame sizes, cold and sustained thermal state | Qualification report |
-| S10 | Results are reproducible | One command regenerates every number in the report from a commit, recording chip, OS and commit | `mkl suite` (T12) |
+| S10 | Results are reproducible | One command regenerates every number in the report from a commit, recording chip, OS and commit | `ce suite` (T12) |
 
 ### Stop and rethink
 

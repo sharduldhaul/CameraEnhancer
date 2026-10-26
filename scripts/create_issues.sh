@@ -184,19 +184,19 @@ milestone "$M" "Project builds, Metal toolchain works, device properties reporte
 
 task "$M" T01 scaffold-build "Project scaffold and build" \
   'Create a C++20 project that compiles host code with metal-cpp and compiles `.metal` sources into a `.metallib` loaded at runtime.' \
-  'A clean `cmake -B build && cmake --build build` produces the `mkl` binary and `kernels.metallib` with zero warnings under `-Wall -Wextra -Werror`.' \
+  'A clean `cmake -B build && cmake --build build` produces the `ce` binary and `kernels.metallib` with zero warnings under `-Wall -Wextra -Werror`.' \
   'Verify Metal toolchain :: `xcrun -sdk macosx metal --version` succeeds. If the toolchain is missing, install it with `xcodebuild -downloadComponent MetalToolchain`. Versions recorded in README.' \
-  'CMake skeleton :: CMakeLists.txt builds an empty `mkl` executable with C++20 and warnings as errors.' \
+  'CMake skeleton :: CMakeLists.txt builds an empty `ce` executable with C++20 and warnings as errors.' \
   'Vendor metal-cpp :: Headers pinned to one release in `third_party/metal-cpp`. One translation unit defines `NS_PRIVATE_IMPLEMENTATION` and `MTL_PRIVATE_IMPLEMENTATION`. Links the Metal and Foundation frameworks.' \
   'Kernel library build step :: CMake custom command compiles `kernels/*.metal` to `.air` and links them into `build/kernels.metallib`. Editing a `.metal` file triggers a rebuild.' \
   'Formatting and lint config :: `.clang-format` and `.clang-tidy` committed. `clang-format --dry-run --Werror` passes on all sources.'
 
 task "$M" T02 device-info "Device introspection" \
   'Report the GPU properties that bound kernel design on this Mac.' \
-  '`mkl info` prints device name, unified memory flag, recommended max working set size, max threads per threadgroup, max threadgroup memory, and highest supported Apple GPU family. The same data is written as JSON.' \
-  'Device query :: `mkl info` prints the listed properties from `MTL::Device`.' \
+  '`ce info` prints device name, unified memory flag, recommended max working set size, max threads per threadgroup, max threadgroup memory, and highest supported Apple GPU family. The same data is written as JSON.' \
+  'Device query :: `ce info` prints the listed properties from `MTL::Device`.' \
   'GPU family detection :: Reports the highest `MTL::GPUFamilyApple*` for which `supportsFamily` returns true.' \
-  'JSON output :: `mkl info --json` writes `results/device.json`. Schema documented in `docs/tasks/device-info/`.'
+  'JSON output :: `ce info --json` writes `results/device.json`. Schema documented in `docs/tasks/device-info/`.'
 
 # ---------------------------------------------------------------- M1
 
@@ -294,7 +294,7 @@ task "$M" T11 characterization "Kernel characterization and roofline" \
   'Pipeline properties :: `threadExecutionWidth`, `maxTotalThreadsPerThreadgroup`, and `staticThreadgroupMemoryLength` recorded per pipeline in results JSON.' \
   'Threadgroup size sweep :: For each kernel, time versus threadgroup size. Best size recorded.' \
   'Counter support survey :: Records which counter sets and sampling points this GPU supports.' \
-  'GPU trace capture :: `mkl capture --kernel <name>` writes a `.gputrace` through `MTL::CaptureManager` (run with `MTL_CAPTURE_ENABLED=1`). One trace opened in Xcode with findings noted.'
+  'GPU trace capture :: `ce capture --kernel <name>` writes a `.gputrace` through `MTL::CaptureManager` (run with `MTL_CAPTURE_ENABLED=1`). One trace opened in Xcode with findings noted.'
 
 # ---------------------------------------------------------------- M6
 
@@ -303,7 +303,7 @@ milestone "$M" "One CLI runs tests, benchmarks, reports, and regression checks."
 
 task "$M" T12 cli-suite "CLI and benchmark suite" \
   'Expose every capability through one CLI so the full test and benchmark run is one command.' \
-  'Subcommands `info`, `test`, `bench`, `suite`, `capture`, `compare`. `mkl suite` runs verification then benchmarks for all kernels and writes one JSON file with chip, macOS version, git commit, and build type.' \
+  'Subcommands `info`, `test`, `bench`, `suite`, `capture`, `compare`. `ce suite` runs verification then benchmarks for all kernels and writes one JSON file with chip, macOS version, git commit, and build type.' \
   'Argument parsing :: Subcommands and flags documented in `--help`.' \
   'Kernel registry :: Each kernel registers name, shapes, CPU reference, and dispatch. The CLI discovers kernels from the registry.' \
   'Suite runner :: Runs all registered kernels behind the verification gate.' \
@@ -311,7 +311,7 @@ task "$M" T12 cli-suite "CLI and benchmark suite" \
 
 task "$M" T13 report-regression "Report and regression check" \
   'Turn results into a readable report and detect performance regressions between commits.' \
-  '`scripts/report.py` generates a Markdown report with tables and a roofline chart from suite JSON. `mkl compare old.json new.json` exits nonzero when any kernel median slows by more than 10%. Runs locally on this Mac so timings stay comparable.' \
+  '`scripts/report.py` generates a Markdown report with tables and a roofline chart from suite JSON. `ce compare old.json new.json` exits nonzero when any kernel median slows by more than 10%. Runs locally on this Mac so timings stay comparable.' \
   'Report generator :: Markdown tables and roofline PNG from suite JSON.' \
   'Compare command :: Nonzero exit code on regression. Threshold configurable.' \
   'Baseline file :: Reference results committed with the environment they came from.'

@@ -17,7 +17,7 @@ Every stage of the camera pipeline, from the first ISP kernel to the denoiser's 
 ### In scope
 
 - Check the Metal toolchain and record its version in the README.
-- CMake project that builds the `mkl` executable as C++20 with `-Wall -Wextra -Werror`.
+- CMake project that builds the `ce` executable as C++20 with `-Wall -Wextra -Werror`.
 - metal-cpp vendored in `third_party/metal-cpp`, pinned to one release, linked with the Metal and Foundation frameworks.
 - Build step that compiles `kernels/*.metal` into `build/kernels.metallib` and rebuilds when a `.metal` file changes.
 - One placeholder kernel, so the build step has an input.
