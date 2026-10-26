@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Creates labels, milestones, task issues and sub-issues for metal-kernel-lab.
+# Creates labels, milestones, task issues and sub-issues for CameraEnhancer.
 #
 # Usage:
 #   DRY_RUN=1 ./create_issues.sh   # print what would be created, no GitHub calls
@@ -12,7 +12,7 @@
 #     Sub-issues X.6+ (label: impl): implementation steps
 set -euo pipefail
 
-REPO="sharduldhaul/metal-kernel-lab"
+REPO="sharduldhaul/CameraEnhancer"
 DRY_RUN="${DRY_RUN:-0}"
 API_VERSION="2022-11-28"
 LAST=""
