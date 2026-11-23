@@ -1,23 +1,19 @@
 #!/usr/bin/env bash
-# Creates labels, milestones, task issues and sub-issues for CameraEnhancer.
+# Creates the milestones and task issues for CameraEnhancer. The plan lives in docs/GOAL.md.
 #
 # Usage:
-#   DRY_RUN=1 ./create_issues.sh   # print what would be created, no GitHub calls
-#   ./create_issues.sh             # create everything on GitHub
+#   DRY_RUN=1 ./create_issues.sh           # print what would be created, no GitHub calls
+#   ./create_issues.sh                     # create missing milestones and issues
+#   UPDATE_EXISTING=1 ./create_issues.sh   # also rewrite the body and milestone of existing issues
 #
-# Structure:
-#   Milestone -> Task issue (label: task)
-#     Sub-issues X.1 to X.5 (label: design): goal, expected outcome,
-#       entities + ER diagram, OO mapping, task guidelines
-#     Sub-issues X.6+ (label: impl): implementation steps
+# The script is idempotent: a milestone or issue whose title already exists is not created again.
+# Each task is one issue (label: task) with a goal and a done-when checklist.
 set -euo pipefail
 
 REPO="sharduldhaul/CameraEnhancer"
 DRY_RUN="${DRY_RUN:-0}"
-API_VERSION="2022-11-28"
-LAST=""
-FAKE=0
-COUNT=0
+UPDATE_EXISTING="${UPDATE_EXISTING:-0}"
+CREATED=0
 
 if [ "$DRY_RUN" != "1" ]; then
   gh auth status >/dev/null
@@ -30,291 +26,196 @@ label() { # name color description
   gh label create "$1" --repo "$REPO" --color "$2" --description "$3" --force >/dev/null
 }
 
-milestone() { # title description
-  if [ "$DRY_RUN" = "1" ]; then echo; echo "milestone: $1"; return; fi
+milestone() { # title description [due_on, ISO 8601]
+  if [ "$DRY_RUN" = "1" ]; then echo; echo "milestone: $1${3:+ (due $3)}"; return; fi
   local existing
   existing=$(gh api "repos/$REPO/milestones?state=all&per_page=100" \
     --jq ".[] | select(.title == \"$1\") | .number")
-  if [ -z "$existing" ]; then
+  if [ -n "$existing" ]; then
+    echo; echo "milestone exists: $1"
+    return
+  fi
+  if [ -n "${3:-}" ]; then
+    gh api --method POST "repos/$REPO/milestones" -f title="$1" -f description="$2" -f due_on="$3" >/dev/null
+  else
     gh api --method POST "repos/$REPO/milestones" -f title="$1" -f description="$2" >/dev/null
   fi
+  echo; echo "milestone created: $1"
 }
 
-new_issue() { # milestone label title ; body on stdin ; sets LAST to issue number
-  COUNT=$((COUNT + 1))
-  if [ "$DRY_RUN" = "1" ]; then
-    cat >/dev/null
-    FAKE=$((FAKE + 1)); LAST="$FAKE"
-    if [ "$2" = "task" ]; then echo "  #$LAST $3"; else echo "      #$LAST [$2] $3"; fi
+task() { # milestone title ; body on stdin
+  local body
+  body=$(cat)
+  if [ "$DRY_RUN" = "1" ]; then echo "  $2"; return; fi
+  local existing
+  existing=$(gh issue list --repo "$REPO" --state all --limit 500 --json number,title \
+    --jq ".[] | select(.title == \"$2\") | .number")
+  if [ -n "$existing" ]; then
+    if [ "$UPDATE_EXISTING" = "1" ]; then
+      printf '%s\n' "$body" | gh issue edit "$existing" --repo "$REPO" \
+        --milestone "$1" --add-label task --body-file - >/dev/null
+      echo "  updated #$existing $2"
+    else
+      echo "  exists  #$existing $2"
+    fi
     return
   fi
   local url
-  url=$(gh issue create --repo "$REPO" --milestone "$1" --label "$2" --title "$3" --body-file -)
-  LAST="${url##*/}"
-}
-
-link() { # parent_number child_number
-  if [ "$DRY_RUN" = "1" ]; then return; fi
-  local child_id
-  child_id=$(gh api "repos/$REPO/issues/$2" --jq .id)
-  gh api --method POST "repos/$REPO/issues/$1/sub_issues" \
-    -H "Accept: application/vnd.github+json" \
-    -H "X-GitHub-Api-Version: $API_VERSION" \
-    -F sub_issue_id="$child_id" >/dev/null
-}
-
-design() { # milestone parent tid slug
-  local ms="$1" p="$2" t="$3" d="docs/tasks/$4"
-
-  new_issue "$ms" design "$t.1 Define the goal" <<EOF
-Parent: #$p
-
-Write the **Goal** section of \`$d/README.md\`:
-- Problem this task solves and why the lab needs it
-- In scope
-- Out of scope
-
-**Done when:** the section is committed and agrees with the goal in #$p.
-EOF
-  link "$p" "$LAST"
-
-  new_issue "$ms" design "$t.2 Define the expected outcome" <<EOF
-Parent: #$p
-
-Write the **Expected outcome** section of \`$d/README.md\`:
-- Acceptance criteria, each one measurable
-- Failure criteria: which results mean stop and rethink
-- How each criterion is verified (test, benchmark, or review)
-
-**Done when:** every criterion has a verification method.
-EOF
-  link "$p" "$LAST"
-
-  new_issue "$ms" design "$t.3 Map entities and relationships" <<EOF
-Parent: #$p
-
-Write \`$d/entities.md\`:
-- Entities this task introduces or touches (data and runtime objects)
-- Attributes of each entity
-- Relationships with cardinality
-- A Mermaid \`erDiagram\` of the above
-
-**Done when:** the diagram renders on GitHub and covers every entity listed.
-EOF
-  link "$p" "$LAST"
-
-  new_issue "$ms" design "$t.4 Map entities to C++ types" <<EOF
-Parent: #$p
-
-Write \`$d/classes.md\`:
-- Each entity mapped to a C++ class or struct
-- Ownership and lifetime of each type (value, \`std::unique_ptr\`, \`NS::SharedPtr\`)
-- Public interface of each type
-- A Mermaid \`classDiagram\`
-
-If this task adds no new types, write \`Not applicable\` with the reason and close this issue.
-
-**Done when:** every entity from $t.3 has a type or a stated reason for having none.
-EOF
-  link "$p" "$LAST"
-
-  new_issue "$ms" design "$t.5 Write task guidelines" <<EOF
-Parent: #$p
-
-Write \`$d/guidelines.md\` with rules specific to this task, extending \`docs/GUIDELINES.md\`.
-(T01 creates \`docs/GUIDELINES.md\` in this step.)
-
-Cover:
-- Naming
-- Error handling
-- Resource ownership
-- Numeric tolerances
-- Test requirements
-- Benchmark method (warmup, iterations, statistic reported)
-
-**Done when:** reviewed before the first implementation commit of #$p.
-EOF
-  link "$p" "$LAST"
-}
-
-impl() { # milestone parent tid index "Title :: done-when"
-  local title="${5%% :: *}" done_when="${5#* :: }"
-  new_issue "$1" impl "$3.$4 $title" <<EOF
-Parent: #$2
-
-**Done when:** $done_when
-
-Follow \`docs/GUIDELINES.md\` and the task guidelines from $3.5.
-EOF
-  link "$2" "$LAST"
-}
-
-task() { # milestone tid slug title goal expected impl_items...
-  local ms="$1" tid="$2" slug="$3" title="$4" goal="$5" expected="$6"
-  shift 6
-  new_issue "$ms" task "$tid $title" <<EOF
-## Goal
-$goal
-
-## Expected outcome
-$expected
-
-## Process
-Design sub-issues $tid.1 to $tid.5 close before implementation sub-issues start.
-Design docs live in \`docs/tasks/$slug/\`.
-EOF
-  local parent="$LAST" i=6 item
-  design "$ms" "$parent" "$tid" "$slug"
-  for item in "$@"; do
-    impl "$ms" "$parent" "$tid" "$i" "$item"
-    i=$((i + 1))
-  done
+  url=$(printf '%s\n' "$body" | gh issue create --repo "$REPO" --milestone "$1" --label task \
+    --title "$2" --body-file -)
+  CREATED=$((CREATED + 1))
+  echo "  created #${url##*/} $2"
 }
 
 # ---------------------------------------------------------------- labels
 
-label task   "5319e7" "Top-level task with design and implementation sub-issues"
-label design "0e8a16" "Design step: goal, outcome, entities, types, guidelines"
-label impl   "1d76db" "Implementation step"
+label task "5319e7" "One task: a goal and a done-when checklist"
 
-# ---------------------------------------------------------------- M0
+# ---------------------------------------------------------------- v0.1
 
-M="M0 Foundation"
-milestone "$M" "Project builds, Metal toolchain works, device properties reported."
+M="v0.1 Classical pipeline"
+milestone "$M" \
+  "Three ISP kernels turn a 12 MP Bayer frame into an sRGB image. Timed, checked against library references, and compared with Apple's CIRAWFilter." \
+  "2026-12-07T23:59:59Z"
 
-task "$M" T01 scaffold-build "Project scaffold and build" \
-  'Create a C++20 project that compiles host code with metal-cpp and compiles `.metal` sources into a `.metallib` loaded at runtime.' \
-  'A clean `cmake -B build && cmake --build build` produces the `ce` binary and `kernels.metallib` with zero warnings under `-Wall -Wextra -Werror`.' \
-  'Verify Metal toolchain :: `xcrun -sdk macosx metal --version` succeeds. If the toolchain is missing, install it with `xcodebuild -downloadComponent MetalToolchain`. Versions recorded in README.' \
-  'CMake skeleton :: CMakeLists.txt builds an empty `ce` executable with C++20 and warnings as errors.' \
-  'Vendor metal-cpp :: Headers pinned to one release in `third_party/metal-cpp`. One translation unit defines `NS_PRIVATE_IMPLEMENTATION` and `MTL_PRIVATE_IMPLEMENTATION`. Links the Metal and Foundation frameworks.' \
-  'Kernel library build step :: CMake custom command compiles `kernels/*.metal` to `.air` and links them into `build/kernels.metallib`. Editing a `.metal` file triggers a rebuild.' \
-  'Formatting and lint config :: `.clang-format` and `.clang-tidy` committed. `clang-format --dry-run --Werror` passes on all sources.'
+task "$M" "T01 Build" <<'EOF'
+## Goal
+One command compiles the C++ host code and the Metal kernels. `libce` holds the GPU code and `ce` is a thin command-line program on top of it. See the library design rules in `docs/GOAL.md` and the scope in `docs/tasks/scaffold-build/README.md`.
 
-task "$M" T02 device-info "Device introspection" \
-  'Report the GPU properties that bound kernel design on this Mac.' \
-  '`ce info` prints device name, unified memory flag, recommended max working set size, max threads per threadgroup, max threadgroup memory, and highest supported Apple GPU family. The same data is written as JSON.' \
-  'Device query :: `ce info` prints the listed properties from `MTL::Device`.' \
-  'GPU family detection :: Reports the highest `MTL::GPUFamilyApple*` for which `supportsFamily` returns true.' \
-  'JSON output :: `ce info --json` writes `results/device.json`. Schema documented in `docs/tasks/device-info/`.'
+## Done when
+- [ ] `xcrun -sdk macosx metal --version` succeeds. Toolchain versions are recorded in the README.
+- [ ] metal-cpp is vendored in `third_party/metal-cpp`, pinned to one release.
+- [ ] `cmake -B build && cmake --build build` produces `libce`, `ce` and `build/kernels.metallib` with zero warnings under `-Wall -Wextra -Werror`.
+- [ ] Editing a `.metal` file rebuilds `kernels.metallib`.
+- [ ] `ce` prints the GPU name.
+- [ ] `.clang-format` is committed and `clang-format --dry-run --Werror` passes.
 
-# ---------------------------------------------------------------- M1
+**Dates:** Nov 22–24
+EOF
 
-M="M1 Harness"
-milestone "$M" "Kernels dispatch, time, and verify through one reusable layer."
+task "$M" "T02 GPU harness and timing" <<'EOF'
+## Goal
+Load kernels from `kernels.metallib`, dispatch them with one call, and time them on the GPU. Dispatch follows library design rules 2 and 3: it encodes into a command buffer the caller provides and uses buffers the caller provides.
 
-task "$M" T03 dispatch "Buffer and dispatch layer" \
-  'Provide owning wrappers for device, command queue, buffers, and compute pipelines so a kernel dispatches with one call.' \
-  'A `vector_add` kernel runs through the layer and matches the CPU result exactly for sizes 1, 1023, 1048576, and a size that is not a multiple of the threadgroup size.' \
-  'Context object :: Owns `MTL::Device` and `MTL::CommandQueue` through `NS::SharedPtr`. No raw `release()` calls outside wrappers.' \
-  'Typed buffers :: Shared-storage buffers expose a typed CPU view (`std::span`). Size is checked at creation.' \
-  'Pipeline cache :: One pipeline per function name, created from `kernels.metallib` and reused. A missing function name produces a clear error.' \
-  'Dispatch API :: One call sets pipeline, buffers, grid size, and threadgroup size, then commits and waits. Command buffer errors are surfaced to the caller.' \
-  'vector_add smoke kernel :: Passes all sizes listed in the parent issue.'
+## Done when
+- [ ] A context object owns `MTL::Device` and `MTL::CommandQueue` through `NS::SharedPtr`.
+- [ ] A pipeline cache creates one pipeline per function name from `kernels.metallib`. An unknown name produces a clear error.
+- [ ] Dispatch encodes into a command buffer passed in by the caller.
+- [ ] A copy kernel matches its input exactly for sizes 1, 1023, 2^20, and a size that is not a multiple of the threadgroup size.
+- [ ] Timing reads `gpuStartTime` and `gpuEndTime`, discards warm-up runs, and reports median, p10 and p90.
+- [ ] Three runs of a 256 MB copy give medians within 5% of each other.
 
-task "$M" T04 timing "GPU timing" \
-  'Measure kernel execution time on the GPU with stable, repeatable statistics.' \
-  'Timing uses command buffer `GPUStartTime` and `GPUEndTime`, runs warmup iterations, and reports median, p10, and p90. Three back-to-back runs of a 256 MB copy report medians within 5% of each other.' \
-  'Timer :: Returns per-iteration GPU time from command buffer timestamps.' \
-  'Warmup and iteration control :: Warmup count and iteration count are configurable. Warmup results are discarded.' \
-  'Statistics :: Median, p10, p90, and min reported. Unit tested on fixed inputs.' \
-  'Repeatability check :: Result of the 5% test documented, with notes on thermal state and background load.'
+**Dates:** Nov 25–27
+EOF
 
-task "$M" T05 correctness "Correctness verification" \
-  'Verify every kernel against a CPU reference before any benchmark result is accepted.' \
-  '`ctest` runs all correctness tests. fp32 and fp16 comparisons use documented absolute and relative tolerances. The benchmark path refuses to report timing for a kernel that fails verification.' \
-  'Test framework :: Framework chosen in design, integrated with CMake and `ctest`.' \
-  'CPU reference library :: Reference implementations live in their own module, separate from kernel host code.' \
-  'Tolerance compare :: Compares fp32 and fp16 outputs. Reports max absolute error, max relative error, and first failing index.' \
-  'Benchmark gate :: Benchmark path runs verification first and aborts on failure.'
+task "$M" "T03 Bandwidth ceiling" <<'EOF'
+## Goal
+Measure the real memory bandwidth of this GPU. It is the ceiling for every memory-bound stage (S3).
 
-# ---------------------------------------------------------------- M2
+## Done when
+- [ ] A `float4` copy kernel passes verification.
+- [ ] A sweep from 1 MB to 512 MB writes a CSV with buffer size and GB/s. GB/s counts bytes read plus bytes written.
+- [ ] Peak sustained GB/s is saved in `results/device.json` with the chip, the macOS version and Apple's published 120 GB/s.
 
-M="M2 Memory bandwidth"
-milestone "$M" "Measured bandwidth ceiling for memory-bound kernels."
+**Cut 1** (if T01–T03 are not merged by Nov 29): measure one 256 MB buffer instead of a sweep.
 
-task "$M" T06 bandwidth "Bandwidth probe" \
-  'Measure the real memory bandwidth ceiling of this GPU. It becomes the roofline limit for memory-bound kernels.' \
-  'Read, write, and copy kernels sweep buffer sizes from 1 MB to 512 MB. Results report GB/s per size. Peak sustained bandwidth is stored in `results/device.json` and compared with the Apple published figure for the chip.' \
-  'Copy kernel :: Scalar and `float4` variants, both verified.' \
-  'Read-only kernel :: Reduction that the compiler cannot eliminate, verified.' \
-  'Write-only kernel :: Fill kernel, verified.' \
-  'Size sweep :: Sweeps 1 MB to 512 MB per buffer. Outputs CSV with columns size, variant, GB/s.' \
-  'Peak record :: Highest sustained GB/s saved as the bandwidth ceiling, with chip name and macOS version.'
+**Dates:** Nov 28
+EOF
 
-# ---------------------------------------------------------------- M3
+task "$M" "T04 Test data and references" <<'EOF'
+## Goal
+Provide the input data and the library references that every kernel is checked against (S1).
 
-M="M3 FP16 matvec"
-milestone "$M" "Optimized fp16 matrix-vector kernels compared with the bandwidth ceiling and MLX."
+## Done when
+- [ ] A 12 MP Bayer RAW file is chosen, for example from raw.pixls.us. Its source and license are recorded in `data/README.md`. The file itself is not committed.
+- [ ] An export script uses `rawpy` to write the Bayer plane (uint16) and a metadata JSON file: width, height, CFA pattern, black level, white level, white balance gains and color matrix.
+- [ ] References: Normalize uses NumPy, Demosaic uses `colour-demosaicing` (bilinear), and Color and tone uses `colour-science`.
+- [ ] The file format and the `ce` command that the tests call are documented.
+- [ ] A pytest harness runs `ce` on the exported data and compares each stage with its reference. Tolerances are documented.
 
-task "$M" T07 matvec-f16 "FP16 matrix-vector kernels" \
-  'Implement the decode-path matrix-vector multiply in progressively optimized variants and measure each against the bandwidth ceiling.' \
-  'Variants v1 to v4 pass verification on shapes 4096x4096, 14336x4096, and 4096x14336 (rows x cols). Target: best variant reaches at least 70% of measured bandwidth. Failure criterion: below 50% requires a written analysis before M4 starts.' \
-  'Variant v1 :: One thread per row. Verified and timed.' \
-  'Variant v2 :: One threadgroup per row with threadgroup-memory reduction. Verified and timed.' \
-  'Variant v3 :: Simdgroup reduction with `simd_sum`. Verified and timed.' \
-  'Variant v4 :: v3 with `half4` vectorized loads. Verified and timed.' \
-  'Shape sweep :: CSV with columns variant, shape, median time, effective GB/s.'
+**Dates:** Nov 25–29
+EOF
 
-task "$M" T08 mlx-baseline "MLX baseline" \
-  'Measure MLX on the same shapes to know the gap between the hand-written kernels and a production library.' \
-  '`bench/baselines/mlx_matvec.py` times fp16 matvec for the T07 shapes, synchronizing with `mx.eval`. Results use the T07 CSV schema. Comparison table committed in `docs/tasks/mlx-baseline/`.' \
-  'Baseline script :: Uses the same warmup and iteration counts as the C++ harness.' \
-  'Schema match :: Output CSV has the same columns as the C++ results.' \
-  'Comparison table :: Per shape: best own variant, MLX, ratio.'
+task "$M" "T05 Normalize kernel" <<'EOF'
+## Goal
+The first ISP kernel. It subtracts the black level, scales by the white level, and applies the white balance gain for each CFA position.
 
-# ---------------------------------------------------------------- M4
+## Done when
+- [ ] Pseudocode is reviewed before the Metal code is written.
+- [ ] The stage can be called on its own through `libce` (library design rule 4).
+- [ ] The output matches the NumPy reference within the documented fp32 tolerance.
+- [ ] Achieved GB/s and % of the T03 ceiling are reported.
 
-M="M4 Quantized matvec"
-milestone "$M" "4-bit weights with dequantization fused into the kernel."
+**Dates:** Nov 30
+EOF
 
-task "$M" T09 q4-format "Q4 block format" \
-  'Define a 4-bit weight format and CPU quantize and dequantize routines that the GPU kernel reads.' \
-  'Format documented byte by byte: blocks of 32 weights, one fp16 scale, 16 bytes of packed 4-bit values, 18 bytes per block (same layout as llama.cpp Q4_0). CPU round-trip error measured and recorded.' \
-  'Format spec :: Layout, nibble order, and alignment documented.' \
-  'CPU quantize :: Produces blocks from fp32 weights. Unit tested.' \
-  'CPU dequantize :: Inverse routine. Round-trip RMSE recorded for random weights.'
+task "$M" "T06 Demosaic kernel" <<'EOF'
+## Goal
+Bilinear demosaic. It computes the two missing colors at every pixel from its Bayer neighbors.
 
-task "$M" T10 matvec-q4 "Q4 matrix-vector kernel with fused dequantization" \
-  'Multiply a Q4 weight matrix by an fp16 vector, dequantizing inside the kernel.' \
-  'Kernel matches CPU dequantize plus matvec within documented tolerance on the T07 shapes. Effective bandwidth is computed from Q4 bytes read. Target: at least 2x faster than the best fp16 variant on 14336x4096.' \
-  'Fused kernel v1 :: One simdgroup per row. Verified and timed.' \
-  'Fused kernel v2 :: Vectorized block loads and simdgroup reduction. Verified and timed.' \
-  'Comparison :: CSV and table against the best fp16 variant.'
+## Done when
+- [ ] Pseudocode, including border handling, is reviewed before the Metal code is written.
+- [ ] The stage can be called on its own through `libce`.
+- [ ] The output matches `colour-demosaicing` bilinear within the documented tolerance, borders included.
+- [ ] Achieved GB/s and % of the T03 ceiling are reported.
 
-# ---------------------------------------------------------------- M5
+**Dates:** Dec 1–2
+EOF
 
-M="M5 Characterization"
-milestone "$M" "Roofline, pipeline limits, and occupancy explain each result."
+task "$M" "T07 Color and tone kernel" <<'EOF'
+## Goal
+Convert camera RGB to sRGB. The kernel applies a 3×3 color matrix, clips to [0, 1], and encodes with the sRGB transfer function.
 
-task "$M" T11 characterization "Kernel characterization and roofline" \
-  'Identify why each kernel performs as it does: compute-bound or memory-bound, pipeline limits, and threadgroup sizing.' \
-  'For every kernel variant the report lists arithmetic intensity, achieved GB/s and GFLOP/s, position on a roofline built from measured ceilings, pipeline properties, and the limiting factor.' \
-  'Compute ceiling probe :: FMA-heavy kernel measures peak fp32 and fp16 GFLOP/s.' \
-  'Pipeline properties :: `threadExecutionWidth`, `maxTotalThreadsPerThreadgroup`, and `staticThreadgroupMemoryLength` recorded per pipeline in results JSON.' \
-  'Threadgroup size sweep :: For each kernel, time versus threadgroup size. Best size recorded.' \
-  'Counter support survey :: Records which counter sets and sampling points this GPU supports.' \
-  'GPU trace capture :: `ce capture --kernel <name>` writes a `.gputrace` through `MTL::CaptureManager` (run with `MTL_CAPTURE_ENABLED=1`). One trace opened in Xcode with findings noted.'
+## Done when
+- [ ] Pseudocode is reviewed before the Metal code is written.
+- [ ] The stage can be called on its own through `libce`.
+- [ ] The output matches `colour-science` within the documented tolerance.
+- [ ] Achieved GB/s and % of the T03 ceiling are reported.
 
-# ---------------------------------------------------------------- M6
+**Cut 2** (if T01–T03 are not merged by Nov 29): use a gamma curve instead of the exact sRGB function.
 
-M="M6 Complete program"
-milestone "$M" "One CLI runs tests, benchmarks, reports, and regression checks."
+**Dates:** Dec 3
+EOF
 
-task "$M" T12 cli-suite "CLI and benchmark suite" \
-  'Expose every capability through one CLI so the full test and benchmark run is one command.' \
-  'Subcommands `info`, `test`, `bench`, `suite`, `capture`, `compare`. `ce suite` runs verification then benchmarks for all kernels and writes one JSON file with chip, macOS version, git commit, and build type.' \
-  'Argument parsing :: Subcommands and flags documented in `--help`.' \
-  'Kernel registry :: Each kernel registers name, shapes, CPU reference, and dispatch. The CLI discovers kernels from the registry.' \
-  'Suite runner :: Runs all registered kernels behind the verification gate.' \
-  'Environment metadata :: Captured in every results file.'
+task "$M" "T08 Pipeline, benchmark and baseline" <<'EOF'
+## Goal
+Chain the three stages, measure them, and measure Apple's `CIRAWFilter` on the same input.
 
-task "$M" T13 report-regression "Report and regression check" \
-  'Turn results into a readable report and detect performance regressions between commits.' \
-  '`scripts/report.py` generates a Markdown report with tables and a roofline chart from suite JSON. `ce compare old.json new.json` exits nonzero when any kernel median slows by more than 10%. Runs locally on this Mac so timings stay comparable.' \
-  'Report generator :: Markdown tables and roofline PNG from suite JSON.' \
-  'Compare command :: Nonzero exit code on regression. Threshold configurable.' \
-  'Baseline file :: Reference results committed with the environment they came from.'
+## Done when
+- [ ] A `libce` pipeline object chains Normalize, Demosaic, and Color and tone in one command buffer. `ce run` uses it.
+- [ ] `ce bench` writes a results JSON with per-stage and total GPU time (median of 20 runs after warm-up), GB/s, % of ceiling, chip, OS and commit.
+- [ ] The full pipeline takes ≤ 33 ms of GPU time on the 12 MP frame (S2).
+- [ ] A Swift script times `CIRAWFilter` on the same file with lens correction off, noise reduction at 0, and the same output size. It reports the median of 20 `CIRenderInfo.kernelExecutionTime` values (S4).
+- [ ] One command regenerates the README results table from the results JSON (S5).
+
+**Dates:** Dec 4–5
+EOF
+
+task "$M" "Release v0.1" <<'EOF'
+## Goal
+Publish the v0.1 results and promote `develop` to `main`.
+
+## Done when
+- [ ] The README shows the results table: GPU time per stage and in total, % of the bandwidth ceiling, and `CIRAWFilter` time.
+- [ ] S1–S5 in `docs/GOAL.md` are checked, and any miss is written up.
+- [ ] A PR from `develop` to `main` carries the results and is merged.
+- [ ] `main` is tagged `v0.1`.
+
+**Cut 3** (if T01–T03 are not merged by Nov 29): drop the per-stage % of ceiling from the table and keep the total time against `CIRAWFilter`.
+
+**Dates:** Dec 6–7
+EOF
+
+# ---------------------------------------------------------------- later milestones (tasks are created when each one starts)
+
+milestone "v0.2 Learned denoiser" \
+  "Small CNN trained in PyTorch on SIDD. Inference on hand-written Metal convolution kernels: naive, tiled, then simdgroup_matrix. Compared with Core ML and MPSGraph on the same weights."
+
+milestone "v0.3 Library release" \
+  "Swift package, Core Image wrapper (CIImageProcessorKernel), iOS build, API documentation."
+
+milestone "v0.4 Characterization" \
+  "Compute ceiling and roofline report, threadgroup size sweeps, test matrix (ISO, scenes, thermal state), regression check, sensor noise characterization, CI on a self-hosted runner."
 
 echo
-echo "Issues created: $COUNT"
+echo "Issues created: $CREATED"
