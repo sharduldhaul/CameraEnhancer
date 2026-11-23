@@ -12,20 +12,20 @@ Every stage of the camera pipeline, from the first ISP kernel to the denoiser's 
 
 - **Comparable results.** Benchmarks from different commits are only comparable when the build is fixed: one compiler, one set of flags, one pinned metal-cpp release.
 - **Errors at build time.** Compiling `.metal` sources ahead of time reports shader errors during the build instead of at runtime. It also keeps shader compilation out of measured GPU time.
-- **A target for CI.** The CI gate in [docs/GOAL.md](../../GOAL.md#engineering-process) needs a build that fails on warnings, format errors and lint errors.
+- **A gate for every PR.** The merge checks in [docs/GOAL.md](../../GOAL.md#engineering-process) need a build that fails on warnings and format errors.
 
 ### In scope
 
 - Check the Metal toolchain and record its version in the README.
-- CMake project that builds the `ce` executable as C++20 with `-Wall -Wextra -Werror`.
+- CMake project that builds the `libce` static library and the `ce` executable on top of it, as C++20 with `-Wall -Wextra -Werror`. See the library design rules in [docs/GOAL.md](../../GOAL.md#library-design-rules).
 - metal-cpp vendored in `third_party/metal-cpp`, pinned to one release, linked with the Metal and Foundation frameworks.
 - Build step that compiles `kernels/*.metal` into `build/kernels.metallib` and rebuilds when a `.metal` file changes.
 - One placeholder kernel, so the build step has an input.
-- `.clang-format` and `.clang-tidy` configuration.
+- `ce` creates the default `MTL::Device` and prints its name, which proves metal-cpp links and runs.
+- `.clang-format` configuration.
 
 ### Out of scope
 
-- Loading the `.metallib` and dispatching kernels (T03).
-- Device queries (T02), timing (T04), correctness tests (T05).
-- Python environment for training, references and reports.
-- CI workflows. They are a separate task, and T01 only provides the build they call.
+- Loading the `.metallib`, dispatching kernels and timing (T02).
+- Correctness tests (T04).
+- `.clang-tidy` and CI workflows (v0.4).
