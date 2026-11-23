@@ -1,0 +1,19 @@
+[project]
+name = "cameraenhancer"
+version = "0.1.0"
+description = "Python side of CameraEnhancer: training, reference implementations and reports"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.5.5",
+    "torch>=2.15.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+# Tests import reference code as `from reference.conv2d import conv2d`.
+pythonpath = ["python"]
+testpaths = ["python/tests"]
